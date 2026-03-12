@@ -1,0 +1,61 @@
+appId: com.resurrection.app
+productName: 리저렉션
+directories:
+  output: release
+asar: true
+asarUnpack:
+  - "node_modules/node-window-manager/**"
+  - "node_modules/extract-file-icon/**"
+
+# 한국어/영어 로케일만 포함 (36MB → ~1MB 절감)
+electronLanguages:
+  - ko
+  - en-US
+
+files:
+  - "**/*"
+  - "!src/**"
+  - "!release/**"
+  - "!*.log"
+  - "!.gitignore"
+  - "!tsconfig*.json"
+  - "!vite.config.*"
+  - "!postcss.config.*"
+  - "!tailwind.config.*"
+  - "!electron-builder.yml"
+  - "!package-lock.json"
+  - "!scripts/**"
+  # node_modules 내 불필요 파일 제거
+  - "!node_modules/**/*.md"
+  - "!node_modules/**/*.MD"
+  - "!node_modules/**/*.d.ts"
+  - "!node_modules/**/*.map"
+  - "!node_modules/**/test/**"
+  - "!node_modules/**/tests/**"
+  - "!node_modules/**/__tests__/**"
+  - "!node_modules/**/example/**"
+  - "!node_modules/**/examples/**"
+  - "!node_modules/**/docs/**"
+  - "!node_modules/**/.github/**"
+  - "!node_modules/**/CHANGELOG*"
+  - "!node_modules/**/LICENSE*"
+  - "!node_modules/**/AUTHORS*"
+  - "!node_modules/**/CONTRIBUTORS*"
+
+# 빌드 후 대용량 불필요 파일 제거
+afterPack: "scripts/afterPack.js"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/favicon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  installerIcon: assets/favicon.ico
+  uninstallerIcon: assets/favicon.ico

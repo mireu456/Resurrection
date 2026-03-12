@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  :root {
+    --ios-bg: #000000;
+    --ios-grouped: #0c0c0e;
+    --ios-elevated: #1c1c1e;
+    --ios-secondary: #2c2c2e;
+    --ios-tertiary: #3a3a3c;
+    --ios-separator: #38383a;
+    --ios-label: #ffffff;
+    --ios-label-secondary: #8e8e93;
+    --ios-blue: #7B3BE6;
+    --ios-green: #30d158;
+    --ios-red: #ff453a;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-black text-white;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
+      'Segoe UI', 'Helvetica Neue', sans-serif;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  /* iOS 스타일 스크롤바 - 얇고 미니멀 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ios-tertiary rounded-full;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ios-label-tertiary;
+  }
+
+  /* 버튼/인터랙티브 탭 포커스 시 아웃라인 제거 */
+  button:focus-visible,
+  input:focus-visible {
+    @apply outline-none ring-2 ring-ios-blue ring-offset-2 ring-offset-black;
+  }
+}
+
+@layer utilities {
+  /* iOS 블러 글래스 효과 */
+  .glass {
+    @apply bg-ios-elevated/80 backdrop-blur-ios;
+  }
+}
