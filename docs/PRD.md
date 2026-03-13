@@ -173,7 +173,7 @@
 - 안정성: 네이티브 모듈 로딩 실패 시 앱 전체가 크래시하지 않아야 한다.
 - 정확도: 시스템 창 제외 및 점수 매칭으로 오복원 확률을 낮춰야 한다.
 - 보안: `contextIsolation: true`, `nodeIntegration: false`, preload IPC 브리지 구조를 유지해야 한다.
-- 호환성: Windows x64 배포와 설치 흐름(NSIS)을 제공해야 한다.
+- 호환성: Windows x64 포터블(무설치 단일 EXE) 배포를 제공해야 한다.
 
 ## 10. 사용 기술 스택
 ### 10.1 애플리케이션/런타임
@@ -195,7 +195,7 @@
 
 ### 10.4 빌드/배포
 - Electron Builder `^24.9.1`
-- NSIS 설치 패키징(Windows x64)
+- Portable 단일 EXE 패키징(Windows x64)
 - `electron-rebuild ^3.2.9` (네이티브 모듈 재빌드)
 - `concurrently ^8.2.2` (개발 서버 동시 실행)
 

@@ -4,10 +4,13 @@
   "description": "듀얼모니터 창 배치 복원 앱",
   "main": "dist/main/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"tsc -p tsconfig.main.json -w\"",
+    "dev": "concurrently \"vite\" \"tsc -p tsconfig.main.json -w\" \"npm:dev:electron\"",
+    "dev:electron": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"while (-not (Test-Path 'dist/main/main.js')) { Start-Sleep -Milliseconds 300 }; while (-not (Test-Path 'dist/preload/preload.js')) { Start-Sleep -Milliseconds 300 }; Start-Sleep -Milliseconds 700; electron .\"",
     "start": "electron .",
     "build": "vite build && tsc -p tsconfig.main.json",
-    "dist": "npm run build && electron-builder",
+    "dist": "npm run dist:portable",
+    "dist:portable": "npm run build && electron-builder --win portable --x64 && node scripts/preparePortableRelease.mjs",
+    "dist:portable:verify": "node scripts/verifyPortableRelease.mjs",
     "rebuild": "electron-rebuild -f -w node-window-manager",
     "create-favicon": "node scripts/createFavicon.mjs"
   },

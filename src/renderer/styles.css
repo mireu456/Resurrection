@@ -7,18 +7,42 @@
     box-sizing: border-box;
   }
 
-  :root {
-    --ios-bg: #000000;
-    --ios-grouped: #0c0c0e;
-    --ios-elevated: #1c1c1e;
-    --ios-secondary: #2c2c2e;
-    --ios-tertiary: #3a3a3c;
-    --ios-separator: #38383a;
-    --ios-label: #ffffff;
-    --ios-label-secondary: #8e8e93;
-    --ios-blue: #7B3BE6;
-    --ios-green: #30d158;
-    --ios-red: #ff453a;
+  :root,
+  :root[data-theme='dark'] {
+    /* 기본값은 다크 모드로 둡니다. */
+    --ios-bg: 0 0 0;
+    --ios-grouped: 12 12 14;
+    --ios-elevated: 28 28 30;
+    --ios-secondary: 44 44 46;
+    --ios-tertiary: 58 58 60;
+    --ios-separator: 56 56 58;
+    --ios-label: 255 255 255;
+    --ios-label-secondary: 142 142 147;
+    --ios-label-tertiary: 99 99 102;
+    --ios-blue: 123 59 230;
+    --ios-green: 48 209 88;
+    --ios-red: 255 69 58;
+    --ios-orange: 255 159 10;
+    --ios-shadow: rgba(0, 0, 0, 0.3);
+    --ios-shadow-elevated: rgba(0, 0, 0, 0.4);
+  }
+
+  :root[data-theme='light'] {
+    --ios-bg: 255 255 255;
+    --ios-grouped: 242 242 247;
+    --ios-elevated: 255 255 255;
+    --ios-secondary: 242 242 247;
+    --ios-tertiary: 209 209 214;
+    --ios-separator: 198 198 200;
+    --ios-label: 28 28 30;
+    --ios-label-secondary: 99 99 102;
+    --ios-label-tertiary: 142 142 147;
+    --ios-blue: 123 59 230;
+    --ios-green: 52 199 89;
+    --ios-red: 255 59 48;
+    --ios-orange: 255 149 0;
+    --ios-shadow: rgba(15, 23, 42, 0.12);
+    --ios-shadow-elevated: rgba(15, 23, 42, 0.2);
   }
 
   html {
@@ -27,7 +51,8 @@
   }
 
   body {
-    @apply bg-black text-white;
+    background-color: rgb(var(--ios-bg));
+    color: rgb(var(--ios-label));
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text',
       'Segoe UI', 'Helvetica Neue', sans-serif;
     margin: 0;
@@ -35,7 +60,7 @@
     overflow: hidden;
   }
 
-  /* iOS 스타일 스크롤바 - 얇고 미니멀 */
+  /* 스크롤바는 테마 변수만 참조하도록 구성합니다. */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -55,15 +80,13 @@
     @apply bg-ios-label-tertiary;
   }
 
-  /* 버튼/인터랙티브 탭 포커스 시 아웃라인 제거 */
   button:focus-visible,
   input:focus-visible {
-    @apply outline-none ring-2 ring-ios-blue ring-offset-2 ring-offset-black;
+    @apply outline-none ring-2 ring-ios-blue ring-offset-2 ring-offset-ios-bg;
   }
 }
 
 @layer utilities {
-  /* iOS 블러 글래스 효과 */
   .glass {
     @apply bg-ios-elevated/80 backdrop-blur-ios;
   }

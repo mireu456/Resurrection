@@ -1,7 +1,9 @@
 appId: com.resurrection.app
 productName: 리저렉션
 directories:
-  output: release
+  output: release/staging
+# 실행 중인 앱이 있어도 패키징이 실패하지 않도록 네이티브 자동 재빌드는 비활성화합니다.
+npmRebuild: false
 asar: true
 asarUnpack:
   - "node_modules/node-window-manager/**"
@@ -45,17 +47,12 @@ files:
 # 빌드 후 대용량 불필요 파일 제거
 afterPack: "scripts/afterPack.js"
 
+# 산출물 파일명 고정: 제품명-버전-portable-x64.exe
+artifactName: "${productName}-${version}-portable-${arch}.${ext}"
+
 win:
   target:
-    - target: nsis
+    - target: portable
       arch:
         - x64
   icon: assets/favicon.ico
-
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
-  installerIcon: assets/favicon.ico
-  uninstallerIcon: assets/favicon.ico

@@ -4,6 +4,18 @@ import fs from 'fs';
 
 let tray: Tray | null = null;
 
+export type TrayConfirmStatus =
+  | 'shown'
+  | 'clicked'
+  | 'dismissed'
+  | 'expired'
+  | 'failed_to_show';
+
+export interface TrayConfirmResult {
+  confirmed: boolean;
+  status: TrayConfirmStatus;
+}
+
 function getTrayIcon(): Electron.NativeImage {
   const assetsDir = path.join(app.getAppPath(), 'assets');
   const faviconPath = path.join(assetsDir, 'favicon_resurrection.png');
@@ -64,4 +76,60 @@ export function destroyTray(): void {
     tray.destroy();
     tray = null;
   }
+}
+
+export async function showRestoreConfirmationBalloon(options: {
+  layoutName: string;
+  windowCount: number;
+  reason: string;
+  timeoutMs?: number;
+}): Promise<TrayConfirmResult> {
+  if (!tray) {
+    return { confirmed: false, status: 'failed_to_show' };
+  }
+  const currentTray = tray;
+
+  const timeoutMs = options.timeoutMs ?? 8000;
+
+  return new Promise((resolve) => {
+    let done = false;
+    let timer: NodeJS.Timeout | null = null;
+
+    const finish = (result: TrayConfirmResult) => {
+      if (done) return;
+      done = true;
+      // 리스너를 반드시 정리해 중복 클릭/메모리 누수를 막는다.
+      currentTray.removeListener('balloon-click', onClick);
+      currentTray.removeListener('balloon-closed', onClosed);
+      currentTray.removeListener('balloon-show', onShow);
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+
+    const onClick = () => finish({ confirmed: true, status: 'clicked' });
+    const onClosed = () => finish({ confirmed: false, status: 'dismissed' });
+    const onShow = () => {
+      // 상태 추적 목적의 no-op. 명시적으로 이벤트 수신 가능성을 유지한다.
+    };
+
+    currentTray.on('balloon-click', onClick);
+    currentTray.on('balloon-closed', onClosed);
+    currentTray.on('balloon-show', onShow);
+
+    timer = setTimeout(() => {
+      finish({ confirmed: false, status: 'expired' });
+    }, timeoutMs);
+
+    try {
+      currentTray.displayBalloon({
+        title: '리저렉션 복원 확인',
+        content: `[${options.reason}] "${options.layoutName}" 레이아웃(${options.windowCount}개 창)을 복원하려면 팝업을 클릭하세요.`,
+        iconType: 'info',
+        noSound: true,
+      });
+    } catch (error) {
+      console.error('[Tray] Failed to show balloon:', error);
+      finish({ confirmed: false, status: 'failed_to_show' });
+    }
+  });
 }

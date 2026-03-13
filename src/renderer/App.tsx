@@ -1,14 +1,35 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from './api';
-import type { Layout, Settings, WindowInfo } from './api';
+import type { Layout, Settings, ThemeMode, WindowInfo } from './api';
 
 type Tab = 'layouts' | 'preview' | 'settings';
+
+type MonitorRow = {
+  id: number;
+  model: string;
+  internal: boolean;
+  width: number;
+  height: number;
+  scaleFactor: number;
+  x: number;
+  y: number;
+  rotation: number;
+  primary: boolean;
+};
+
+type HoverPreviewState = {
+  layout: Layout;
+  anchorRect: DOMRect;
+};
 
 export default function App() {
   const [layouts, setLayouts] = useState<Layout[]>([]);
   const [settings, setSettings] = useState<Settings>({
     autoRestore: false,
     askBeforeRestore: true,
+    themeMode: 'system',
+    lastRestoredByMonitorKey: {},
     lastLayoutId: null,
   });
   const [newLayoutName, setNewLayoutName] = useState('');
@@ -17,20 +38,77 @@ export default function App() {
   const [statusType, setStatusType] = useState<'ok' | 'err'>('ok');
   const [loading, setLoading] = useState(false);
   const [previewWindows, setPreviewWindows] = useState<WindowInfo[]>([]);
+  const [previewSystemWindows, setPreviewSystemWindows] = useState<WindowInfo[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [systemWindowsCollapsed, setSystemWindowsCollapsed] = useState(true);
+  const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hoverPopupRef = useRef<HTMLDivElement | null>(null);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => {
+    if (typeof window.matchMedia !== 'function') return true;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  const appliedTheme: 'dark' | 'light' =
+    settings.themeMode === 'system'
+      ? (systemPrefersDark ? 'dark' : 'light')
+      : settings.themeMode;
 
   const loadData = useCallback(async () => {
-    const [layoutData, settingsData] = await Promise.all([
-      api.getLayouts(),
-      api.getSettings(),
-    ]);
-    setLayouts(layoutData);
-    setSettings(settingsData);
+    console.info('[Renderer][App] loadData start. window.api exists =', typeof window.api !== 'undefined');
+    try {
+      if (!window.api) {
+        setStatusType('err');
+        setStatusMsg('Electron API가 없습니다. `npm run dev`로 Electron 앱을 실행하세요.');
+        return;
+      }
+      const [layoutData, settingsData] = await Promise.all([
+        api.getLayouts(),
+        api.getSettings(),
+      ]);
+      console.info('[Renderer][App] loadData success:', {
+        layoutCount: layoutData.length,
+        hasSettings: Boolean(settingsData),
+      });
+      setLayouts(layoutData);
+      setSettings(settingsData);
+    } catch (error) {
+      console.error('[Renderer][App] loadData failed:', error);
+      setStatusType('err');
+      setStatusMsg(`초기 데이터 로드 실패: ${error}`);
+    }
   }, []);
 
   useEffect(() => {
+    console.info('[Renderer][App] mounted. window.api exists =', typeof window.api !== 'undefined');
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleSystemThemeChange = (event: MediaQueryListEvent) => {
+      setSystemPrefersDark(event.matches);
+    };
+
+    // 학습 포인트:
+    // 앱 실행 중에 OS 테마가 바뀔 수 있으므로 change 이벤트를 구독합니다.
+    setSystemPrefersDark(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleSystemThemeChange);
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleSystemThemeChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    // 학습 포인트:
+    // data-theme 속성을 바꾸면 CSS 변수 묶음(다크/라이트)이 한 번에 교체됩니다.
+    // system 모드일 때도 appliedTheme이 실제 테마 값을 결정해 줍니다.
+    document.documentElement.setAttribute('data-theme', appliedTheme);
+  }, [appliedTheme]);
 
   const showStatus = (msg: string, type: 'ok' | 'err' = 'ok') => {
     setStatusMsg(msg);
@@ -82,6 +160,9 @@ export default function App() {
   };
 
   const handleDelete = async (layout: Layout) => {
+    const ok = window.confirm(`"${layout.name}" 레이아웃을 삭제할까요?\n삭제 후에는 되돌릴 수 없습니다.`);
+    if (!ok) return;
+
     await api.deleteLayout(layout.id);
     setLayouts((prev) => prev.filter((l) => l.id !== layout.id));
     if (settings.lastLayoutId === layout.id) {
@@ -91,24 +172,186 @@ export default function App() {
   };
 
   const handleSettingChange = async (
-    key: keyof Settings,
+    key: 'autoRestore' | 'askBeforeRestore',
     value: boolean
   ) => {
     const updated = await api.updateSettings({ [key]: value });
     setSettings(updated);
   };
 
+  const handleThemeModeChange = async (mode: ThemeMode) => {
+    if (settings.themeMode === mode) return;
+    const updated = await api.updateSettings({ themeMode: mode });
+    setSettings(updated);
+  };
+
+  const appliedThemeLabel = appliedTheme === 'dark' ? '다크' : '라이트';
+
   const handlePreview = async () => {
     setPreviewLoading(true);
     try {
-      const wins = await api.captureWindows();
-      setPreviewWindows(wins);
+      const result = await api.captureWindowsDetailed();
+      setPreviewWindows(result.regular);
+      setPreviewSystemWindows(result.system);
     } catch (e) {
       showStatus(`현재 창 목록 가져오기 실패: ${e}`, 'err');
     } finally {
       setPreviewLoading(false);
     }
   };
+
+  const getMonitorRows = (layout: Layout): MonitorRow[] => {
+    const context = layout.monitorContext;
+    if (!context) return [];
+
+    // 신규 저장 데이터: 모니터 상세 정보가 그대로 들어있다.
+    if (context.monitors && context.monitors.length > 0) {
+      return context.monitors.map((monitor) => ({
+        ...monitor,
+        model: monitor.model || '모니터 정보 없음',
+      }));
+    }
+
+    // 구버전 데이터 fallback: signature와 model 문자열로 최소 정보를 복원한다.
+    if (context.monitorSignatures.length > 0) {
+      return context.monitorSignatures.map((signature, index) => {
+        const parts = signature.split('|');
+        const model = parts[0] || context.monitorModels[index] || '모니터 정보 없음';
+        const internalToken = parts.find((part) => part === 'i1' || part === 'i0');
+        const sizeToken = parts.find((part) => part.startsWith('s'));
+        const rotationToken = parts.find((part) => part.startsWith('r'));
+        const [width, height] = (sizeToken?.slice(1).split('x') ?? ['0', '0']).map((value) => Number(value));
+
+        return {
+          id: index,
+          model,
+          internal: internalToken === 'i1',
+          width: Number.isFinite(width) ? width : 0,
+          height: Number.isFinite(height) ? height : 0,
+          scaleFactor: 1,
+          x: 0,
+          y: 0,
+          rotation: Number(rotationToken?.slice(1) ?? 0),
+          primary: signature.includes('p1'),
+        };
+      });
+    }
+
+    return (context.monitorModels ?? []).map((model, index) => ({
+      id: index,
+      model,
+      internal: false,
+      width: 0,
+      height: 0,
+      scaleFactor: 1,
+      x: 0,
+      y: 0,
+      rotation: 0,
+      primary: index === 0,
+    }));
+  };
+
+  const formatMonitorModel = (model: string): string => {
+    if (!model || model.includes('unknown-model')) return '모니터 정보 없음';
+    return model;
+  };
+
+  const getSingleMonitorLabel = (layout: Layout): string => {
+    const rows = getMonitorRows(layout);
+    if (rows.length === 0) return '모니터 정보 없음';
+    return formatMonitorModel(rows[0].model);
+  };
+
+  const getPopupPosition = (anchorRect: DOMRect) => {
+    const width = 380;
+    const gap = 10;
+    const minMargin = 12;
+    const maxHeight = Math.min(460, window.innerHeight - minMargin * 2);
+
+    let left = anchorRect.right + gap;
+    if (left + width > window.innerWidth - minMargin) {
+      left = anchorRect.left - width - gap;
+    }
+    left = Math.max(minMargin, Math.min(left, window.innerWidth - width - minMargin));
+
+    let top = anchorRect.top;
+    if (top + maxHeight > window.innerHeight - minMargin) {
+      top = Math.max(minMargin, window.innerHeight - maxHeight - minMargin);
+    }
+
+    return { left, top, width, maxHeight };
+  };
+
+  const startLayoutHoverPreview = (layout: Layout, anchorRect: DOMRect) => {
+    if (hoverHideTimerRef.current) {
+      clearTimeout(hoverHideTimerRef.current);
+      hoverHideTimerRef.current = null;
+    }
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+    }
+    hoverTimerRef.current = setTimeout(() => {
+      setHoverPreview({ layout, anchorRect });
+    }, 500);
+  };
+
+  const stopLayoutHoverPreview = () => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (hoverHideTimerRef.current) {
+      clearTimeout(hoverHideTimerRef.current);
+    }
+    hoverHideTimerRef.current = setTimeout(() => {
+      setHoverPreview(null);
+    }, 120);
+  };
+
+  const keepHoverPreviewVisible = () => {
+    if (hoverHideTimerRef.current) {
+      clearTimeout(hoverHideTimerRef.current);
+      hoverHideTimerRef.current = null;
+    }
+  };
+
+  const hideHoverPreviewImmediately = () => {
+    if (hoverHideTimerRef.current) {
+      clearTimeout(hoverHideTimerRef.current);
+      hoverHideTimerRef.current = null;
+    }
+    setHoverPreview(null);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+      if (hoverHideTimerRef.current) {
+        clearTimeout(hoverHideTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hoverPreview) return;
+    const close = () => setHoverPreview(null);
+    const handleWindowScroll = (event: Event) => {
+      const target = event.target as Node | null;
+      if (target && hoverPopupRef.current?.contains(target)) {
+        return;
+      }
+      close();
+    };
+
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', handleWindowScroll, true);
+    return () => {
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', handleWindowScroll, true);
+    };
+  }, [hoverPreview]);
 
   const formatDate = (ts: number) =>
     new Date(ts).toLocaleString('ko-KR', {
@@ -121,42 +364,48 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-ios-bg text-ios-label select-none">
       {/* 헤더 - iOS 스타일 블러 글래스 */}
-      <header className="glass border-b border-ios-separator/50 px-5 py-3 flex items-center gap-3 flex-shrink-0">
-        <img
-          src="./favicon-32x32.png"
-          alt="리저렉션"
-          className="w-8 h-8 rounded-[10px] object-contain shadow-ios"
-        />
-        <div>
-          <span className="font-semibold text-ios-label text-lg tracking-tight">리저렉션</span>
-          <span className="text-xs text-ios-label-secondary ml-2">듀얼모니터 창 배치 복원</span>
-        </div>
+      <header className="glass border-b border-ios-separator/50 px-5 py-3 flex items-center justify-center flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => setActiveTab('layouts')}
+          aria-label="홈으로 이동"
+          title="홈으로 이동"
+          className="inline-flex items-center rounded-ios transition-all duration-ios hover:opacity-90 active:scale-[0.99]"
+        >
+          <img
+            src="./logo_resurrection.png"
+            alt="리저렉션 홈"
+            className="h-[108px] w-auto max-w-[75vw] sm:max-w-[620px] object-contain"
+          />
+        </button>
       </header>
 
       {/* 세그먼트 컨트롤 - iOS 스타일 */}
       <nav className="bg-ios-bg px-4 py-4 flex-shrink-0">
-        <div className="inline-flex p-1 bg-ios-secondary rounded-ios-lg" role="tablist">
-          {(
-            [
-              { id: 'layouts', label: '레이아웃' },
-              { id: 'preview', label: '현재 창 목록' },
-              { id: 'settings', label: '설정' },
-            ] as { id: Tab; label: string }[]
-          ).map(({ id, label }) => (
-            <button
-              key={id}
-              role="tab"
-              aria-selected={activeTab === id}
-              onClick={() => setActiveTab(id)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-ios ease-ios ${
-                activeTab === id
-                  ? 'bg-ios-elevated text-ios-label shadow-ios'
-                  : 'text-ios-label-secondary hover:text-ios-label'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+        <div className="max-w-2xl mx-auto">
+          <div className="inline-flex p-1 bg-ios-secondary rounded-ios-lg" role="tablist">
+            {(
+              [
+                { id: 'layouts', label: '레이아웃' },
+                { id: 'preview', label: '현재 창 목록' },
+                { id: 'settings', label: '설정' },
+              ] as { id: Tab; label: string }[]
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={activeTab === id}
+                onClick={() => setActiveTab(id)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-ios ease-ios ${
+                  activeTab === id
+                    ? 'bg-ios-elevated text-ios-label shadow-ios'
+                    : 'text-ios-label-secondary hover:text-ios-label'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </nav>
 
@@ -197,7 +446,7 @@ export default function App() {
             </section>
 
             {/* 저장된 레이아웃 목록 - iOS 그룹 리스트 */}
-            <section className="rounded-ios-xl overflow-hidden bg-ios-elevated shadow-ios">
+            <section className="rounded-ios-xl bg-ios-elevated shadow-ios">
               <div className="px-4 py-3 flex items-center justify-between border-b border-ios-separator/50">
                 <h2 className="text-[13px] font-semibold text-ios-label-secondary uppercase tracking-wide">
                   저장된 레이아웃
@@ -217,10 +466,16 @@ export default function App() {
                 </div>
               ) : (
                 <ul>
-                  {layouts.map((layout, idx) => (
+                  {layouts.map((layout, idx) => {
+                    const monitorRows = getMonitorRows(layout);
+                    return (
                     <li
                       key={layout.id}
-                      className={`flex items-center justify-between px-4 py-3.5 transition-colors duration-ios hover:bg-ios-secondary/50 active:bg-ios-secondary ${
+                      onMouseEnter={(event) =>
+                        startLayoutHoverPreview(layout, event.currentTarget.getBoundingClientRect())
+                      }
+                      onMouseLeave={stopLayoutHoverPreview}
+                      className={`relative flex items-center justify-between px-4 py-3.5 transition-colors duration-ios hover:bg-ios-secondary/50 active:bg-ios-secondary ${
                         idx > 0 ? 'border-t border-ios-separator/30' : ''
                       } ${settings.lastLayoutId === layout.id ? 'bg-ios-blue/5' : ''}`}
                     >
@@ -235,8 +490,33 @@ export default function App() {
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-ios-label-secondary mt-0.5">
-                          창 {layout.windows.length}개 · {formatDate(layout.createdAt)}
+                        <div className="text-xs text-ios-label-secondary mt-1 space-y-1">
+                          {monitorRows.length >= 2 ? (
+                            <div className="space-y-0.5 text-left">
+                              {monitorRows.map((monitor) => (
+                                <div key={`${layout.id}-monitor-${monitor.id}`} className="flex items-center gap-1">
+                                  <span className="truncate">{formatMonitorModel(monitor.model)}</span>
+                                  {monitor.primary && (
+                                    <span className="text-[10px] bg-ios-blue/20 text-ios-blue px-1.5 py-0.5 rounded">
+                                      주 모니터
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-left">
+                              <span>{getSingleMonitorLabel(layout)}</span>
+                              {monitorRows[0]?.primary && (
+                                <span className="text-[10px] bg-ios-blue/20 text-ios-blue px-1.5 py-0.5 rounded">
+                                  주 모니터
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          <div>
+                            창 {layout.windows.length}개 · {formatDate(layout.createdAt)}
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-2 flex-shrink-0 ml-3">
@@ -256,7 +536,7 @@ export default function App() {
                         </button>
                       </div>
                     </li>
-                  ))}
+                  )})}
                 </ul>
               )}
             </section>
@@ -273,13 +553,13 @@ export default function App() {
               <button
                 onClick={handlePreview}
                 disabled={previewLoading}
-                className="text-sm bg-ios-blue hover:opacity-90 disabled:opacity-50 px-4 py-2 rounded-ios font-semibold transition-all duration-ios active:scale-[0.98]"
+                className="text-sm text-white bg-ios-blue hover:opacity-90 disabled:opacity-50 px-4 py-2 rounded-ios font-semibold transition-all duration-ios active:scale-[0.98]"
               >
                 {previewLoading ? '불러오는 중...' : '새로고침'}
               </button>
             </div>
 
-            {previewWindows.length === 0 && !previewLoading && (
+            {previewWindows.length === 0 && previewSystemWindows.length === 0 && !previewLoading && (
               <div className="rounded-ios-xl overflow-hidden bg-ios-elevated py-16 text-center shadow-ios">
                 <div className="text-5xl mb-4 opacity-60">🪟</div>
                 <p className="text-ios-label-secondary text-sm">
@@ -287,50 +567,152 @@ export default function App() {
                 </p>
                 {!window.api && (
                   <p className="text-ios-red text-xs mt-3 font-medium">
-                    ⚠️ node-window-manager가 로드되지 않았습니다.
+                    ⚠️ Electron 연동 API(preload)가 없습니다. 앱을 Electron으로 실행했는지 확인해주세요.
                   </p>
                 )}
               </div>
             )}
 
-            {previewWindows.length > 0 && (
-              <div className="rounded-ios-xl overflow-hidden bg-ios-elevated shadow-ios">
-                <ul>
-                  {previewWindows.map((win, i) => (
-                    <li
-                      key={i}
-                      className={`px-4 py-3.5 ${i > 0 ? 'border-t border-ios-separator/30' : ''}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-ios-label truncate">
-                            {win.title}
-                          </p>
-                          <p className="text-xs text-ios-label-secondary mt-0.5">
-                            {win.processName}
-                          </p>
-                        </div>
-                        <div className="text-xs text-ios-label-tertiary text-right flex-shrink-0 font-mono">
-                          <div>{win.x}, {win.y}</div>
-                          <div>{win.width} × {win.height}</div>
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                <div className="px-4 py-3 border-t border-ios-separator/50 bg-ios-secondary/30">
-                  <p className="text-xs text-ios-label-secondary">
-                    총 {previewWindows.length}개의 창
-                  </p>
+            {(previewWindows.length > 0 || previewSystemWindows.length > 0) && (
+              <>
+                <div className="rounded-ios-xl overflow-hidden bg-ios-elevated shadow-ios">
+                  <div className="px-4 py-3 border-b border-ios-separator/50">
+                    <p className="text-xs font-semibold text-ios-label-secondary uppercase tracking-wide">
+                      일반 창
+                    </p>
+                  </div>
+                  {previewWindows.length === 0 ? (
+                    <div className="px-4 py-6 text-xs text-ios-label-secondary">
+                      일반 창이 없습니다.
+                    </div>
+                  ) : (
+                    <ul>
+                      {previewWindows.map((win, i) => (
+                        <li
+                          key={i}
+                          className={`px-4 py-3.5 ${i > 0 ? 'border-t border-ios-separator/30' : ''}`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-ios-label truncate">
+                                {win.title}
+                              </p>
+                              <p className="text-xs text-ios-label-secondary mt-0.5">
+                                {win.processName}
+                              </p>
+                            </div>
+                            <div className="text-xs text-ios-label-tertiary text-right flex-shrink-0 font-mono">
+                              <div>{win.x}, {win.y}</div>
+                              <div>{win.width} × {win.height}</div>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="px-4 py-3 border-t border-ios-separator/50 bg-ios-secondary/30">
+                    <p className="text-xs text-ios-label-secondary">
+                      일반 창 {previewWindows.length}개
+                    </p>
+                  </div>
                 </div>
-              </div>
+
+                <div className="rounded-ios-xl overflow-hidden bg-ios-elevated shadow-ios">
+                  <button
+                    onClick={() => setSystemWindowsCollapsed((prev) => !prev)}
+                    className="w-full px-4 py-3 flex items-center justify-between border-b border-ios-separator/50 hover:bg-ios-secondary/30 transition-colors"
+                  >
+                    <p className="text-xs font-semibold text-ios-label-secondary uppercase tracking-wide">
+                      시스템 창 ({previewSystemWindows.length}개)
+                    </p>
+                    <span className="text-xs text-ios-label-secondary">
+                      {systemWindowsCollapsed ? '펼치기' : '접기'}
+                    </span>
+                  </button>
+
+                  {!systemWindowsCollapsed && (
+                    <>
+                      {previewSystemWindows.length === 0 ? (
+                        <div className="px-4 py-6 text-xs text-ios-label-secondary">
+                          시스템 창이 없습니다.
+                        </div>
+                      ) : (
+                        <ul>
+                          {previewSystemWindows.map((win, i) => (
+                            <li
+                              key={`sys-${i}`}
+                              className={`px-4 py-3.5 ${i > 0 ? 'border-t border-ios-separator/30' : ''}`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium text-ios-label truncate">
+                                    {win.title}
+                                  </p>
+                                  <p className="text-xs text-ios-label-secondary mt-0.5">
+                                    {win.processName}
+                                  </p>
+                                </div>
+                                <div className="text-xs text-ios-label-tertiary text-right flex-shrink-0 font-mono">
+                                  <div>{win.x}, {win.y}</div>
+                                  <div>{win.width} × {win.height}</div>
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}
 
         {/* ── 설정 탭 ── */}
         {activeTab === 'settings' && (
-          <div className="space-y-6 max-w-lg mx-auto">
+          <div className="space-y-6 max-w-2xl mx-auto">
+            <section className="rounded-ios-xl overflow-hidden bg-ios-elevated shadow-ios">
+              <div className="px-4 py-3 border-b border-ios-separator/50">
+                <h2 className="text-[13px] font-semibold text-ios-label-secondary uppercase tracking-wide">
+                  테마
+                </h2>
+              </div>
+              <div className="p-4 space-y-3">
+                <p className="text-xs text-ios-label-secondary">
+                  화면 모드를 바꾸면 색상 변수 세트가 교체되어 UI 전체가 함께 전환됩니다.
+                </p>
+                <div className="inline-flex p-1 bg-ios-secondary rounded-ios-lg" role="tablist" aria-label="테마 선택">
+                  {(
+                    [
+                      { id: 'system', label: '시스템(자동)' },
+                      { id: 'dark', label: '다크' },
+                      { id: 'light', label: '라이트' },
+                    ] as { id: ThemeMode; label: string }[]
+                  ).map(({ id, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="tab"
+                      aria-selected={settings.themeMode === id}
+                      onClick={() => handleThemeModeChange(id)}
+                      className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-ios ${
+                        settings.themeMode === id
+                          ? 'bg-ios-elevated text-ios-label shadow-ios'
+                          : 'text-ios-label-secondary hover:text-ios-label'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-ios-label-tertiary">
+                  현재 적용 테마: {appliedThemeLabel}
+                  {settings.themeMode === 'system' ? ' (시스템과 자동 연동)' : ''}
+                </p>
+              </div>
+            </section>
+
             <section className="rounded-ios-xl overflow-hidden bg-ios-elevated shadow-ios">
               <div className="px-4 py-3 border-b border-ios-separator/50">
                 <h2 className="text-[13px] font-semibold text-ios-label-secondary uppercase tracking-wide">
@@ -363,7 +745,7 @@ export default function App() {
               <div className="p-4 space-y-0 text-sm">
                 <div className="flex justify-between items-center py-3">
                   <span className="text-ios-label-secondary">버전</span>
-                  <span className="text-ios-label font-medium">v0.1.0</span>
+                  <span className="text-ios-label font-medium">v0.3.0</span>
                 </div>
                 <div className="flex justify-between items-start gap-4 py-3 border-t border-ios-separator/30">
                   <span className="text-ios-label-secondary flex-shrink-0">저장 위치</span>
@@ -380,6 +762,78 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {hoverPreview && createPortal(
+        (() => {
+          const popupPos = getPopupPosition(hoverPreview.anchorRect);
+          const monitorRows = getMonitorRows(hoverPreview.layout);
+          const showMonitorDetails = monitorRows.length >= 2;
+
+          return (
+            <div
+              ref={hoverPopupRef}
+              onMouseEnter={keepHoverPreviewVisible}
+              onMouseLeave={hideHoverPreviewImmediately}
+              className="rounded-xl border border-ios-separator/60 bg-ios-elevated shadow-ios z-[9999] p-3"
+              style={{
+                position: 'fixed',
+                left: popupPos.left,
+                top: popupPos.top,
+                width: popupPos.width,
+                maxHeight: popupPos.maxHeight,
+                overflow: 'auto',
+              }}
+            >
+              <p className="text-xs font-semibold text-ios-label-secondary uppercase tracking-wide mb-2">
+                저장된 창 목록
+              </p>
+              {hoverPreview.layout.windows.length === 0 ? (
+                <p className="text-xs text-ios-label-secondary">저장된 창 정보가 없습니다.</p>
+              ) : (
+                <ul className="max-h-44 overflow-auto space-y-1.5">
+                  {hoverPreview.layout.windows.map((win, wIdx) => (
+                    <li key={`${hoverPreview.layout.id}-hover-${wIdx}`} className="text-xs">
+                      <p className="text-ios-label truncate">{win.title}</p>
+                      <p className="text-ios-label-tertiary truncate">{win.processName}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {showMonitorDetails && (
+                <>
+                  <div className="border-t border-ios-separator/40 mt-3 pt-3">
+                    <p className="text-xs font-semibold text-ios-label-secondary uppercase tracking-wide mb-2">
+                      모니터 상세 정보
+                    </p>
+                    <ul className="space-y-2">
+                      {monitorRows.map((monitor) => (
+                        <li key={`hover-monitor-${hoverPreview.layout.id}-${monitor.id}`} className="text-xs">
+                          <div className="flex items-center gap-1">
+                            <span className="text-ios-label">{formatMonitorModel(monitor.model)}</span>
+                            {monitor.primary && (
+                              <span className="text-[10px] bg-ios-blue/20 text-ios-blue px-1.5 py-0.5 rounded">
+                                주 모니터
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-ios-label-tertiary">
+                            해상도 {monitor.width || '-'} × {monitor.height || '-'} · 배율 {monitor.scaleFactor.toFixed(2)}
+                          </p>
+                          <p className="text-ios-label-tertiary">
+                            위치 {monitor.x}, {monitor.y} · 회전 {monitor.rotation}° · {monitor.internal ? '내장' : '외장'}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })(),
+        document.body
+      )}
 
       {/* 상태 표시줄 - iOS 스타일 */}
       {statusMsg && (
