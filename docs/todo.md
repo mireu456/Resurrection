@@ -33,6 +33,8 @@
 5. `npm run dist:portable:verify` 스크립트를 추가해 EXE/체크섬/빌드 메타정보 정합성을 검증한다.
 6. 배포 정책을 `무설치 전용`, `단일 EXE`, `AppData 저장 유지`, `수동 배포` 기준으로 문서화한다.
 7. PRD 내 기존 NSIS 설치형 문구를 포터블 배포 기준으로 정합성 있게 수정한다.
+8. 코드 서명 전용 배포 커맨드(`npm run dist:portable:signed`)와 인증서 환경 변수 검사 스크립트를 추가한다.
+9. 릴리즈 노트 템플릿 자동 생성 스크립트(`npm run release:notes`)를 추가한다.
 
 ### 수동 배포 체크리스트
 1. `npm run build`가 성공하는지 확인한다.
@@ -41,3 +43,5 @@
 4. `npm run dist:portable:verify`가 성공하는지 확인한다.
 5. 관리자 권한 없이 EXE가 실행되는지 확인한다.
 6. 앱을 종료 후 다시 실행해도 AppData 기반 설정/레이아웃이 유지되는지 확인한다.
+7. `npm run dist:portable:signed` 실행 시 환경 변수 누락을 정확히 감지하는지 확인한다.
+8. 릴리즈 노트(`release/notes/*.md`)가 자동 생성되고 서명 상태가 기입되는지 확인한다.

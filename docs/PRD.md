@@ -196,6 +196,8 @@
 ### 10.4 빌드/배포
 - Electron Builder `^24.9.1`
 - Portable 단일 EXE 패키징(Windows x64)
+- 코드 서명 배포 지원(환경 변수 기반 인증서 주입)
+- 릴리즈 노트 템플릿 자동 생성(`release/notes`)
 - `electron-rebuild ^3.2.9` (네이티브 모듈 재빌드)
 - `concurrently ^8.2.2` (개발 서버 동시 실행)
 
